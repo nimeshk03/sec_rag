@@ -120,6 +120,76 @@ Cache performance metrics.
 ### DELETE /cache/{ticker}
 Invalidate cache for a specific ticker.
 
+## SEC Filing Parser
+
+The `SECFilingParser` class extracts structured sections from SEC filings:
+
+```python
+from src.data import SECFilingParser
+
+parser = SECFilingParser()
+
+# Parse a 10-K filing
+sections = parser.parse_10k(html_content)
+risk_factors = sections.get("1A")  # Item 1A: Risk Factors
+mda = sections.get("7")            # Item 7: MD&A
+
+# Parse a 10-Q filing
+sections = parser.parse_10q(html_content)
+quarterly_mda = sections.get("2")  # Item 2: MD&A
+
+# Parse an 8-K filing
+sections = parser.parse_8k(html_content)
+events = sections.get("8.01")      # Item 8.01: Other Events
+
+# Convenience methods
+risk_text = parser.get_risk_factors(html_content)
+mda_text = parser.get_mda(html_content, filing_type="10-K")
+```
+
+**Supported Sections:**
+- **10-K**: Items 1, 1A, 7, 7A, 8 (Business, Risk Factors, MD&A, Market Risk, Financials)
+- **10-Q**: Items 1-4 (Financials, MD&A, Market Risk, Controls)
+- **8-K**: All material event items (1.01-9.01)
+
+## Text Chunker
+
+The `FilingChunker` class splits parsed sections into overlapping chunks for embedding:
+
+```python
+from src.data import FilingChunker
+
+chunker = FilingChunker(
+    chunk_size=800,      # Target chunk size in characters
+    chunk_overlap=100,   # Overlap between consecutive chunks
+    min_chunk_size=100   # Minimum chunk size to emit
+)
+
+# Chunk a single section with metadata
+chunks = chunker.chunk_section(
+    section_text="Risk factors content...",
+    section_name="1A",
+    filing_type="10-K",
+    ticker="AAPL",
+    filing_date="2024-01-15"
+)
+
+# Each chunk contains:
+# - text: The chunk content
+# - chunk_index: Position in sequence
+# - metadata: {section, filing_type, ticker, filing_date, chunk_position}
+
+# Chunk an entire filing (multiple sections)
+sections = {"1A": "Risk content...", "7": "MD&A content..."}
+all_chunks = chunker.chunk_filing(sections, "10-K", "AAPL")
+```
+
+**Features:**
+- Sentence-boundary detection (breaks at `.`, `!`, `?`, `;`, `:`)
+- Configurable overlap for context preservation
+- Metadata preservation across chunks
+- Minimum chunk size enforcement
+
 ## Project Structure
 
 ```
@@ -127,6 +197,9 @@ risk_analysis_RAG/
 ├── src/
 │   ├── api/          # FastAPI application
 │   ├── data/         # SEC filing download and parsing
+│   │   ├── parser.py # SECFilingParser for 10-K, 10-Q, 8-K
+│   │   ├── chunker.py # FilingChunker for text splitting
+│   │   └── supabase.py # Database client
 │   ├── embeddings/   # Local embedding generation
 │   ├── retrieval/    # Vector search and hybrid retrieval
 │   └── safety/       # Safety checker logic
