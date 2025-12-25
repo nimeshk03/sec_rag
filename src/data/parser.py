@@ -172,29 +172,50 @@ class SECFilingParser:
         boundaries = []
         
         for section_id, section_name in section_patterns.items():
-            # Build regex pattern for section header
+            # Build multiple regex patterns for section header (more flexible)
+            patterns = []
+            
             if filing_type == "8-K":
                 # 8-K uses "Item X.XX" format
-                pattern = rf'(?:^|\n)\s*(?:ITEM\s+)?{re.escape(section_id)}[\.\s:]+{re.escape(section_name[:20])}'
+                patterns = [
+                    rf'(?:^|\n)\s*ITEM\s+{re.escape(section_id)}[.\s:\-]*',
+                    rf'(?:^|\n)\s*{re.escape(section_id)}[.\s:\-]+{re.escape(section_name[:15])}',
+                ]
             else:
                 # 10-K and 10-Q use "Item X" or "ITEM X" format
-                pattern = rf'(?:^|\n)\s*ITEM\s+{re.escape(section_id)}[\.\s:\-]+(?:{re.escape(section_name[:30])})?'
+                # Handle variations like "Item 1A", "ITEM 1A.", "Item 1A -", "Item 1A:"
+                section_id_pattern = re.escape(section_id).replace(r'\-', r'[\-]?')
+                patterns = [
+                    rf'(?:^|\n)\s*ITEM\s+{section_id_pattern}[.\s:\-]+',
+                    rf'(?:^|\n)\s*ITEM\s+{section_id_pattern}\s*$',
+                    rf'(?:^|\n)\s*ITEM\s+{section_id_pattern}\s+{re.escape(section_name[:10])}',
+                ]
             
-            matches = list(re.finditer(pattern, text, re.IGNORECASE | re.MULTILINE))
+            all_matches = []
+            for pattern in patterns:
+                matches = list(re.finditer(pattern, text, re.IGNORECASE | re.MULTILINE))
+                all_matches.extend(matches)
             
-            if matches:
+            if all_matches:
+                # Deduplicate by position (within 50 chars)
+                unique_matches = []
+                for match in sorted(all_matches, key=lambda m: m.start()):
+                    if not unique_matches or match.start() - unique_matches[-1].start() > 50:
+                        unique_matches.append(match)
+                
                 # Use the last match (often the actual content, not table of contents)
                 # But prefer matches that are followed by substantial content
                 best_match = None
-                for match in reversed(matches):
+                for match in reversed(unique_matches):
                     # Check if there's substantial content after this match
-                    remaining = text[match.end():match.end() + 500]
-                    if len(remaining.strip()) > 100:
+                    remaining = text[match.end():match.end() + 1000]
+                    # Look for actual paragraph content, not just more headers
+                    if len(remaining.strip()) > 200 and not remaining.strip()[:50].upper().startswith('ITEM'):
                         best_match = match
                         break
                 
-                if best_match is None and matches:
-                    best_match = matches[-1]
+                if best_match is None and unique_matches:
+                    best_match = unique_matches[-1]
                 
                 if best_match:
                     boundaries.append((section_id, best_match.start(), -1))

@@ -7,8 +7,16 @@ RUN apt-get update && apt-get install -y \
     curl \
     && rm -rf /var/lib/apt/lists/*
 
+# Set pip timeout for large downloads
+ENV PIP_DEFAULT_TIMEOUT=300
+
 COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+
+# Install PyTorch CPU version first (smaller footprint, with retries)
+RUN pip install --no-cache-dir --retries 3 torch --index-url https://download.pytorch.org/whl/cpu
+
+# Install remaining requirements
+RUN pip install --no-cache-dir --retries 3 -r requirements.txt
 
 COPY . .
 

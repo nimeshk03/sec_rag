@@ -190,6 +190,151 @@ all_chunks = chunker.chunk_filing(sections, "10-K", "AAPL")
 - Metadata preservation across chunks
 - Minimum chunk size enforcement
 
+## Local Embeddings
+
+The `LocalEmbedder` class generates 384-dimensional embeddings using BGE-small-en-v1.5:
+
+```python
+from src.embeddings import LocalEmbedder
+
+embedder = LocalEmbedder(
+    model_name="BAAI/bge-small-en-v1.5",  # Default model
+    device="cpu",                          # CPU inference
+    normalize=True                         # L2 normalize embeddings
+)
+
+# Single text embedding
+embedding = embedder.embed_text("Risk factors include market volatility...")
+# Returns: numpy array of shape (384,)
+
+# Batch embedding
+texts = ["Text 1", "Text 2", "Text 3"]
+embeddings = embedder.embed_batch(texts, batch_size=32)
+# Returns: numpy array of shape (3, 384)
+
+# Query embedding (with BGE instruction prefix for better retrieval)
+query_embedding = embedder.embed_query("What are the main risk factors?")
+
+# Compute similarity between embeddings
+similarity = embedder.similarity(embedding1, embedding2)
+```
+
+**Features:**
+- Lazy model loading (loads on first use)
+- CPU-optimized for free tier deployments
+- BGE instruction prefix for query embeddings
+- Batch processing with configurable batch size
+- L2 normalization for cosine similarity
+
+## Supabase Store
+
+The `SupabaseStore` class provides a complete interface for database operations:
+
+```python
+from src.data import SupabaseStore, Filing, SafetyLog
+from datetime import date
+import numpy as np
+
+store = SupabaseStore()
+
+# Filing operations
+filing = Filing(
+    ticker="AAPL",
+    filing_type="10-K",
+    filing_date=date(2024, 1, 15),
+    accession_number="0000320193-24-000001",
+)
+filing_id = store.insert_filing(filing)
+retrieved = store.get_filing("AAPL", filing_type="10-K")
+recent = store.get_recent_filings(ticker="AAPL", days_back=365)
+
+# Chunk operations with embeddings
+from src.data.store import Chunk
+chunks = [
+    Chunk(filing_id=filing_id, section_name="1A", content="Risk...", 
+          chunk_index=0, embedding=np.random.randn(384))
+]
+chunk_ids = store.insert_chunks(chunks)
+
+# Vector similarity search
+query_embedding = np.random.randn(384)
+results = store.vector_search(
+    query_embedding=query_embedding,
+    ticker="AAPL",
+    match_count=10,
+    filing_types=["10-K", "10-Q"],
+    section_names=["1A", "7"]
+)
+
+# Cache operations
+cache_key = SupabaseStore._generate_cache_key("AAPL", "risk query")
+store.set_cached_response(cache_key, {"decision": "PROCEED"}, ttl_hours=24)
+cached = store.get_cached_response(cache_key)  # Returns None if expired
+
+# Safety logging
+log = SafetyLog(
+    ticker="AAPL",
+    proposed_allocation=0.15,
+    current_allocation=0.10,
+    decision="REDUCE",
+    reasoning="High risk due to litigation",
+    risk_score=7,
+)
+store.log_safety_check(log)
+history = store.get_safety_history(ticker="AAPL", days_back=30)
+
+# Earnings calendar
+from src.data.store import EarningsEntry
+entry = EarningsEntry(ticker="AAPL", earnings_date=date(2024, 2, 1), time_of_day="AMC")
+store.update_earnings(entry)
+next_earnings = store.get_next_earnings("AAPL")
+```
+
+**Features:**
+- Full CRUD for filings, chunks, cache, safety logs, and earnings
+- Vector similarity search using pgvector
+- Automatic cache expiration handling
+- Batch chunk insertion with embeddings
+- Safety check audit trail with statistics
+
+## Data Population
+
+The `populate_data.py` script downloads SEC filings, parses them, generates embeddings, and stores everything in Supabase.
+
+### Supported Tickers
+
+AAPL, AMZN, BAC, GOOGL, JPM, MSFT, NVDA, SPY, TLT, GLD
+
+### Usage
+
+```bash
+# Populate all tickers (full run - takes time due to embedding generation)
+python scripts/populate_data.py
+
+# Populate specific tickers
+python scripts/populate_data.py --tickers AAPL,MSFT,NVDA
+
+# Dry run (no database writes)
+python scripts/populate_data.py --dry-run
+
+# Skip embedding generation (faster for testing)
+python scripts/populate_data.py --skip-embeddings
+
+# Skip certain filing types
+python scripts/populate_data.py --no-10k --no-10q  # Only 8-K filings
+
+# Custom options
+python scripts/populate_data.py --days-back-8k 14 --chunk-size 1000
+```
+
+### Pipeline Steps
+
+1. **Download** - Fetches filings from SEC EDGAR with rate limiting
+2. **Parse** - Extracts sections (Risk Factors, MD&A, etc.)
+3. **Chunk** - Splits text into overlapping chunks (800 chars default)
+4. **Embed** - Generates 384-dim embeddings using BGE model
+5. **Store** - Inserts filings and chunks into Supabase
+
 ## Project Structure
 
 ```
@@ -197,14 +342,20 @@ risk_analysis_RAG/
 ├── src/
 │   ├── api/          # FastAPI application
 │   ├── data/         # SEC filing download and parsing
+│   │   ├── sec_downloader.py # SECDownloader for EDGAR API
 │   │   ├── parser.py # SECFilingParser for 10-K, 10-Q, 8-K
 │   │   ├── chunker.py # FilingChunker for text splitting
-│   │   └── supabase.py # Database client
+│   │   ├── supabase.py # Database client singleton
+│   │   └── store.py  # SupabaseStore for all DB operations
 │   ├── embeddings/   # Local embedding generation
+│   │   └── embedder.py # LocalEmbedder using BGE model
 │   ├── retrieval/    # Vector search and hybrid retrieval
 │   └── safety/       # Safety checker logic
 ├── tests/            # Unit and integration tests
 ├── scripts/          # Utility scripts
+│   ├── populate_data.py # Data population pipeline
+│   ├── schema.sql    # Supabase database schema
+│   └── verify_db_setup.py # Database verification
 ├── Dockerfile        # Container definition
 ├── docker-compose.yml
 ├── requirements.txt
