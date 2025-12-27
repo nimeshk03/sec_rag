@@ -362,10 +362,407 @@ risk_analysis_RAG/
 └── README.md
 ```
 
+## Hybrid Retrieval System
+
+The system uses a hybrid approach combining semantic vector search with BM25 keyword search for optimal retrieval performance.
+
+### Architecture
+
+**Components:**
+- `HybridRetriever`: Main retrieval orchestrator
+- `BM25Searcher`: Keyword-based search using BM25 algorithm
+- `QueryPreprocessor`: Query normalization and term expansion
+- `RetrievalConfig`: Configurable weights and parameters
+
+**Default Configuration:**
+- Semantic weight: 70%
+- Keyword weight: 30%
+- Max results: 10
+- Days back: 365
+
+### Usage
+
+```python
+from src.retrieval.hybrid import HybridRetriever, RetrievalConfig
+
+# Initialize with default config
+retriever = HybridRetriever()
+
+# Or with custom config
+config = RetrievalConfig(
+    semantic_weight=0.6,
+    keyword_weight=0.4,
+    max_results=20
+)
+retriever = HybridRetriever(config=config)
+
+# Basic retrieval
+results = retriever.retrieve(
+    query="litigation risks",
+    ticker="AAPL",
+    filing_types=["10-K"],
+    section_names=["1A"]
+)
+
+# Multi-faceted safety check retrieval
+results = retriever.retrieve_for_safety_check(
+    ticker="AAPL",
+    query_aspects=[
+        "litigation and legal risks",
+        "regulatory compliance issues",
+        "financial stability concerns"
+    ]
+)
+
+# Convenience methods
+risk_results = retriever.retrieve_risk_factors(
+    query="patent litigation",
+    ticker="AAPL"
+)
+
+mda_results = retriever.retrieve_mda(
+    query="revenue trends",
+    ticker="AAPL",
+    filing_type="10-K"
+)
+```
+
+### Features
+
+**Query Preprocessing:**
+- Whitespace normalization
+- Financial term expansion (e.g., "litigation" → "lawsuit, legal proceedings")
+- Optional stopword removal
+- Tokenization for BM25
+
+**Score Combination:**
+- Normalized semantic similarity scores (0-1)
+- Normalized BM25 keyword scores (0-1)
+- Weighted combination based on configuration
+- Configurable minimum score threshold
+
+**Filtering:**
+- By ticker symbol
+- By filing type (10-K, 10-Q, 8-K)
+- By section name (1A, 7, 2, etc.)
+- By date range (days back from present)
+
+**Specialized Retrieval:**
+- `retrieve_for_safety_check()`: Multi-aspect retrieval with deduplication
+- `retrieve_risk_factors()`: Targets Item 1A in 10-K filings
+- `retrieve_mda()`: Targets MD&A sections (Item 7 for 10-K, Item 2 for 10-Q)
+- `retrieve_by_section()`: Generic section-specific retrieval
+
+### Verification
+
+Run the verification script to test the implementation:
+
+```bash
+python scripts/verify_hybrid_retrieval.py
+```
+
+## Earnings Proximity Checker
+
+The system monitors upcoming earnings announcements and provides warnings when earnings are within the configured threshold (default: 3 days).
+
+### Architecture
+
+**Components:**
+- `EarningsChecker`: Main checker for earnings proximity detection
+- `EarningsProximity`: Result dataclass with warning information
+- Integration with `SupabaseStore` earnings calendar
+
+**Default Configuration:**
+- Warning threshold: 3 days before earnings
+- Blackout period: 3 days before and after earnings
+
+### Usage
+
+```python
+from src.safety.earnings import EarningsChecker
+
+# Initialize checker
+checker = EarningsChecker(threshold_days=3)
+
+# Check single ticker
+result = checker.check_earnings_proximity("AAPL")
+
+if result.is_within_threshold:
+    print(result.warning_message)
+    # Output: "WARNING: Earnings for AAPL in 2 day(s) on 2024-01-17 (AMC)"
+
+# Check multiple tickers
+results = checker.check_multiple_tickers(["AAPL", "MSFT", "GOOGL"])
+for ticker, result in results.items():
+    if result.is_within_threshold:
+        print(f"{ticker}: {result.warning_message}")
+
+# Check if in blackout period (before or after earnings)
+is_blackout = checker.is_earnings_blackout("AAPL")
+if is_blackout:
+    print("Ticker is in earnings blackout period")
+
+# Get tickers with upcoming earnings
+upcoming_tickers = checker.get_tickers_with_upcoming_earnings(
+    tickers=["AAPL", "MSFT", "GOOGL"],
+    days_ahead=14
+)
+```
+
+### Populating Earnings Data
+
+```python
+from datetime import date
+from src.safety.earnings import EarningsChecker
+
+checker = EarningsChecker()
+
+# Add single earnings entry
+checker.populate_earnings_data(
+    ticker="AAPL",
+    earnings_date=date(2024, 1, 25),
+    time_of_day="AMC",  # After Market Close
+    fiscal_quarter="Q1 2024",
+    source="manual"
+)
+
+# Bulk populate earnings
+earnings_data = [
+    {
+        "ticker": "AAPL",
+        "earnings_date": "2024-01-25",
+        "time_of_day": "AMC",
+        "fiscal_quarter": "Q1 2024"
+    },
+    {
+        "ticker": "MSFT",
+        "earnings_date": "2024-01-30",
+        "time_of_day": "BMO",  # Before Market Open
+        "fiscal_quarter": "Q2 2024"
+    }
+]
+
+entry_ids = checker.bulk_populate_earnings(earnings_data)
+```
+
+### Features
+
+**Proximity Detection:**
+- Calculates days until next earnings announcement
+- Configurable warning threshold (default: 3 days)
+- Handles missing earnings data gracefully
+- Returns detailed `EarningsProximity` result
+
+**Blackout Period:**
+- Detects if ticker is within threshold before earnings
+- Detects if ticker is within threshold after earnings
+- Useful for avoiding trades during volatile periods
+
+**Multi-Ticker Support:**
+- Check multiple tickers in one call
+- Get list of tickers with upcoming earnings
+- Filter by date range
+
+**Data Management:**
+- Single entry population
+- Bulk import support
+- Automatic date conversion from ISO strings
+- Upsert logic (updates existing entries)
+
+### EarningsProximity Result
+
+```python
+@dataclass
+class EarningsProximity:
+    ticker: str
+    has_upcoming_earnings: bool
+    days_until_earnings: Optional[int]
+    earnings_date: Optional[date]
+    time_of_day: Optional[str]  # "BMO", "AMC", "UNKNOWN"
+    is_within_threshold: bool
+    threshold_days: int
+    
+    @property
+    def warning_message(self) -> Optional[str]:
+        # Returns formatted warning message if applicable
+```
+
+## Safety Checker Core Logic
+
+The Safety Checker makes intelligent PROCEED/REDUCE/VETO decisions based on risk analysis, earnings proximity, and allocation size.
+
+### Architecture
+
+**Components:**
+- `SafetyChecker`: Main decision engine
+- `SafetyDecision`: Enum (PROCEED, REDUCE, VETO)
+- `SafetyThresholds`: Configurable decision thresholds
+- `SafetyCheckResult`: Structured result with reasoning
+
+**Decision Logic:**
+1. **VETO**: Risk score ≥8 OR critical event detected
+2. **REDUCE**: Risk score ≥6 OR (earnings within 3 days AND high allocation >15%)
+3. **PROCEED**: All checks pass
+
+### Default Thresholds
+
+```python
+SafetyThresholds(
+    veto_risk_score=8.0,           # VETO threshold
+    reduce_risk_score=6.0,          # REDUCE threshold
+    critical_event_severity=9.0,    # Critical event threshold
+    earnings_warning_days=3,        # Earnings proximity warning
+    high_allocation_pct=15.0        # High allocation threshold
+)
+```
+
+### Usage
+
+```python
+from src.safety.checker import SafetyChecker, SafetyDecision
+
+# Initialize checker
+checker = SafetyChecker()
+
+# Perform safety check
+result = checker.check_safety(
+    ticker="AAPL",
+    allocation_pct=12.0,
+    use_cache=True
+)
+
+# Handle decision
+if result.decision == SafetyDecision.VETO:
+    print(f"❌ VETO: {result.reasoning}")
+    print(f"Risk Score: {result.risk_score}")
+    if result.critical_events:
+        print(f"Critical Events: {result.critical_events}")
+
+elif result.decision == SafetyDecision.REDUCE:
+    print(f"⚠️  REDUCE: {result.reasoning}")
+    print(f"Risk Score: {result.risk_score}")
+    if result.earnings_warning:
+        print(f"Earnings Warning: {result.earnings_warning}")
+
+else:  # PROCEED
+    print(f"✓ PROCEED: {result.reasoning}")
+    print(f"Risk Score: {result.risk_score}")
+```
+
+### Risk Scoring
+
+The system analyzes SEC filings to calculate risk scores (0-10):
+
+**Risk Keywords (with weights):**
+- Bankruptcy, going concern: 3.0
+- Fraud, investigation: 2.5-3.0
+- Litigation, lawsuit: 2.0
+- Regulatory, violation: 1.5-2.0
+- Material weakness, restatement: 2.0-2.5
+
+**Section Weighting:**
+- Item 1A (Risk Factors): 1.5x weight
+- Other sections: 1.0x weight
+
+**Risk Score Ranges:**
+- 0-3: Low risk → PROCEED
+- 4-5.9: Medium risk → PROCEED (monitor)
+- 6-7.9: Elevated risk → REDUCE
+- 8-10: High risk → VETO
+
+### Critical Events
+
+Critical events trigger immediate VETO regardless of risk score:
+- Bankruptcy filing
+- Going concern doubts
+- Material weakness in controls
+- Fraud allegations
+- Criminal investigations
+- Delisting notices
+- Debt defaults
+
+### Caching
+
+**Cache Key Generation:**
+- Allocations bucketed to nearest 5% (e.g., 8%, 10%, 12% → same key)
+- Reduces cache misses for similar allocations
+
+**Dynamic TTL:**
+- High risk (≥8): 1 hour
+- Medium risk (6-7.9): 4 hours
+- Low risk (<6): 24 hours
+
+### Custom Thresholds
+
+```python
+from src.safety.checker import SafetyChecker, SafetyThresholds
+
+# Create custom thresholds
+thresholds = SafetyThresholds(
+    veto_risk_score=9.0,      # More lenient VETO
+    reduce_risk_score=7.0,     # More lenient REDUCE
+    earnings_warning_days=5,   # Wider earnings window
+    high_allocation_pct=20.0   # Higher allocation threshold
+)
+
+checker = SafetyChecker(thresholds=thresholds)
+```
+
+### Integration Example
+
+```python
+from src.safety.checker import SafetyChecker
+
+checker = SafetyChecker()
+
+# Check multiple tickers
+portfolio = [
+    ("AAPL", 15.0),
+    ("MSFT", 12.0),
+    ("GOOGL", 18.0),
+]
+
+for ticker, allocation in portfolio:
+    result = checker.check_safety(ticker, allocation)
+    
+    print(f"\n{ticker} ({allocation}% allocation):")
+    print(f"  Decision: {result.decision.value}")
+    print(f"  Risk Score: {result.risk_score}")
+    print(f"  Reasoning: {result.reasoning}")
+    
+    if result.earnings_warning:
+        print(f"  ⚠️  {result.earnings_warning}")
+```
+
+### SafetyCheckResult Structure
+
+```python
+@dataclass
+class SafetyCheckResult:
+    decision: SafetyDecision          # PROCEED/REDUCE/VETO
+    ticker: str                       # Stock ticker
+    risk_score: float                 # Risk score (0-10)
+    reasoning: str                    # Decision explanation
+    earnings_warning: Optional[str]   # Earnings proximity warning
+    critical_events: Optional[List]   # Critical events found
+    allocation_warning: Optional[str] # High allocation warning
+    cache_hit: bool                   # Whether result was cached
+    retrieved_chunks: Optional[List]  # SEC filing chunks analyzed
+```
+
 ## Running Tests
 
 ```bash
 docker-compose exec api pytest tests/ -v
+
+# Test hybrid retrieval specifically
+docker-compose exec api pytest tests/test_hybrid_retrieval.py -v
+
+# Test earnings proximity checker
+docker-compose exec api pytest tests/test_earnings_checker.py -v
+
+# Test safety checker core logic
+docker-compose exec api pytest tests/test_safety_checker.py -v
 ```
 
 ## Deployment
