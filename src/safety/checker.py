@@ -207,11 +207,9 @@ class SafetyChecker:
         """
         try:
             # Retrieve relevant SEC filing chunks
-            query = "litigation risks regulatory compliance financial risks operational risks"
             results = self.retriever.retrieve_for_safety_check(
-                query=query,
                 ticker=ticker,
-                max_results=10,
+                max_results_per_aspect=5,
             )
             
             if not results:
