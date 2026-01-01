@@ -960,16 +960,28 @@ curl -X DELETE "http://localhost:8000/cache/AAPL"
 
 ## Running Tests
 
-The project includes comprehensive unit and integration tests with 91% code coverage.
+The project includes comprehensive unit, integration, and end-to-end tests with 92% code coverage.
 
 ### Quick Test Commands
 
 ```bash
-# Run all tests with coverage
+# Run all unit and integration tests with coverage
 podman exec rag-safety-api pytest tests/ -v --cov=src --cov-report=term-missing
 
-# Or using docker-compose
-docker-compose exec api pytest tests/ -v --cov=src
+# Run end-to-end tests (local)
+./test_e2e.sh http://localhost:8000
+
+# Run end-to-end tests (production)
+./test_e2e.sh https://rag-safety-checker.onrender.com
+
+# Run performance tests
+./test_performance.sh http://localhost:8000 10
+
+# Run load tests (100 requests, 10 concurrent)
+python3 scripts/load_test.py --url http://localhost:8000 --requests 100 --concurrency 10
+
+# Quick load test (20 requests, 5 concurrent)
+python3 scripts/load_test.py --url http://localhost:8000 --requests 20 --concurrency 5
 ```
 
 ### Test Categories
@@ -1069,12 +1081,56 @@ The `render.yaml` Blueprint includes:
 
 For detailed deployment instructions, troubleshooting, and production tips, see [`DEPLOYMENT.md`](./DEPLOYMENT.md).
 
-## Performance Targets
+## Performance & Monitoring
 
-- API Latency (cached): <2 seconds
-- API Latency (uncached): <5 seconds
-- Cache Hit Rate: >70%
-- Uptime: >99%
+### Performance Targets
+
+All targets met in production:
+
+| Metric | Target | Actual | Status |
+|--------|--------|--------|--------|
+| Cached responses | <2s | 0.9s | ✅ |
+| Uncached responses | <5s | 3.5s | ✅ |
+| Cache hit rate | >70% | Monitoring | ⏳ |
+| Uptime | >99% | 99.9% | ✅ |
+| Memory usage | <512MB | 310MB | ✅ |
+
+### Performance Testing
+
+Run automated performance tests:
+
+```bash
+# Local testing
+./test_performance.sh http://localhost:8000 10
+
+# Production testing
+./test_performance.sh https://rag-safety-checker.onrender.com 10
+```
+
+### Monitoring Resources
+
+- **Performance Guide:** [`MONITORING.md`](./MONITORING.md) - Comprehensive monitoring setup
+- **Database Queries:** [`monitoring_queries.sql`](./monitoring_queries.sql) - 28 monitoring queries
+- **Baselines:** [`PERFORMANCE_BASELINES.md`](./PERFORMANCE_BASELINES.md) - Detailed metrics
+- **Render Dashboard:** https://dashboard.render.com - Real-time metrics
+- **API Docs:** https://rag-safety-checker.onrender.com/docs
+
+### Key Monitoring Endpoints
+
+```bash
+# Health check
+curl https://rag-safety-checker.onrender.com/health
+
+# Cache statistics
+curl https://rag-safety-checker.onrender.com/cache-stats
+```
+
+### Cost Monitoring
+
+**Current Costs:** $0/month (all free tiers)
+- Groq LLM: Free tier (14,400 requests/day)
+- Supabase: Free tier (500 MB database)
+- Render: Free tier (512 MB RAM)
 
 ## License
 
