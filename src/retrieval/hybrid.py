@@ -399,8 +399,8 @@ class HybridRetriever:
             aspect_results = self.retrieve(
                 query=aspect,
                 ticker=ticker,
-                filing_types=["10-K", "10-Q"],  # Focus on periodic filings
-                section_names=["1A", "7", "7A"],  # Risk factors and MD&A
+                filing_types=["10-K", "10-Q", "8-K"],  # Include all filing types
+                section_names=None,  # Don't filter by section - names vary by filing
                 max_results=max_results_per_aspect,
             )
             
