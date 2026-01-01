@@ -14,6 +14,9 @@ from enum import Enum
 from typing import Optional, List, Dict, Any
 import hashlib
 import json
+import logging
+
+logger = logging.getLogger(__name__)
 
 from src.data.store import SupabaseStore, SafetyLog
 from src.safety.earnings import EarningsChecker
@@ -202,19 +205,28 @@ class SafetyChecker:
         Returns:
             Dictionary with risk_score, critical_events, and chunks
         """
-        # Retrieve relevant SEC filing chunks
-        query = "litigation risks regulatory compliance financial risks operational risks"
-        results = self.retriever.retrieve_for_safety_check(
-            query=query,
-            ticker=ticker,
-            max_results=10,
-        )
-        
-        if not results:
-            # No filings found - conservative approach
+        try:
+            # Retrieve relevant SEC filing chunks
+            query = "litigation risks regulatory compliance financial risks operational risks"
+            results = self.retriever.retrieve_for_safety_check(
+                query=query,
+                ticker=ticker,
+                max_results=10,
+            )
+            
+            if not results:
+                # No filings found - conservative approach
+                return {
+                    "risk_score": 5.0,  # Medium risk when no data available
+                    "critical_events": [],
+                    "chunks": [],
+                }
+        except Exception as e:
+            # Retrieval failed - return conservative risk assessment
+            logger.warning(f"Risk analysis failed for {ticker}: {e}")
             return {
-                "risk_score": 5.0,  # Medium risk when no data available
-                "critical_events": [],
+                "risk_score": 7.0,  # Higher risk when retrieval fails (be cautious)
+                "critical_events": ["Data retrieval failed - unable to assess risks"],
                 "chunks": [],
             }
         

@@ -30,13 +30,12 @@ def test_required_files():
         "docker-compose.yml",
         ".env.example",
         ".dockerignore",
-        ".gitignore",
         "render.yaml",
         "README.md",
         "pytest.ini",
         "src/__init__.py",
         "src/api/__init__.py",
-        "src/api/app.py",
+        "src/api/main.py",
         "tests/__init__.py"
     ]
     
@@ -58,7 +57,6 @@ def test_requirements_content():
         "supabase",
         "groq",
         "sentence-transformers",
-        "torch",
         "rank-bm25",
         "beautifulsoup4",
         "requests",

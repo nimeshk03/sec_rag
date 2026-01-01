@@ -12,7 +12,15 @@ services:
         sync: false
       - key: SUPABASE_KEY
         sync: false
-      - key: OPENAI_API_KEY
+      - key: GROQ_API_KEY
         sync: false
+      - key: LLM_PROVIDER
+        value: "groq"
+      - key: LLM_MODEL
+        value: "llama-3.3-70b-versatile"
       - key: PYTHONUNBUFFERED
         value: "1"
+      - key: LOG_LEVEL
+        value: "INFO"
+      - key: CACHE_TTL_DEFAULT
+        value: "7"

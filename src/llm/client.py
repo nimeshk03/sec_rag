@@ -7,7 +7,7 @@ class LLMClient:
     
     def __init__(self):
         self.provider = os.getenv("LLM_PROVIDER", "groq")
-        self.model = os.getenv("LLM_MODEL", "llama-3.1-70b-versatile")
+        self.model = os.getenv("LLM_MODEL", "llama-3.3-70b-versatile")
         
         if self.provider == "groq":
             api_key = os.getenv("GROQ_API_KEY")

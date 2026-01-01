@@ -750,31 +750,324 @@ class SafetyCheckResult:
     retrieved_chunks: Optional[List]  # SEC filing chunks analyzed
 ```
 
-## Running Tests
+## REST API
+
+The system provides a FastAPI REST API for safety checks and filing management.
+
+### Starting the API Server
 
 ```bash
-docker-compose exec api pytest tests/ -v
+# Development
+uvicorn src.api.main:app --reload --host 0.0.0.0 --port 8000
 
-# Test hybrid retrieval specifically
-docker-compose exec api pytest tests/test_hybrid_retrieval.py -v
-
-# Test earnings proximity checker
-docker-compose exec api pytest tests/test_earnings_checker.py -v
-
-# Test safety checker core logic
-docker-compose exec api pytest tests/test_safety_checker.py -v
+# Production
+uvicorn src.api.main:app --host 0.0.0.0 --port 8000 --workers 4
 ```
+
+### API Endpoints
+
+#### POST /safety-check
+
+Perform comprehensive safety check for stock allocation.
+
+**Request:**
+```json
+{
+  "ticker": "AAPL",
+  "allocation_pct": 12.5,
+  "use_cache": true
+}
+```
+
+**Response:**
+```json
+{
+  "decision": "REDUCE",
+  "ticker": "AAPL",
+  "risk_score": 6.5,
+  "reasoning": "Elevated risk score (6.5); Earnings in 2 days with high allocation (18.0%)",
+  "earnings_warning": "WARNING: Earnings for AAPL in 2 day(s) on 2024-01-17 (AMC)",
+  "critical_events": null,
+  "allocation_warning": "High allocation: 18.0%",
+  "cache_hit": false,
+  "retrieved_chunks": [...]
+}
+```
+
+**Status Codes:**
+- `200 OK`: Success
+- `422 Unprocessable Entity`: Validation error
+- `500 Internal Server Error`: Server error
+
+#### POST /index-filing
+
+Start background task to index a new SEC filing.
+
+**Request:**
+```json
+{
+  "ticker": "AAPL",
+  "cik": "0000320193",
+  "filing_type": "10-K",
+  "filing_date": "2024-01-15",
+  "filing_url": "https://www.sec.gov/..."
+}
+```
+
+**Response:**
+```json
+{
+  "status": "processing",
+  "message": "Filing indexing started in background for AAPL",
+  "task_id": "AAPL_10-K_1234567890.123",
+  "ticker": "AAPL",
+  "filing_type": "10-K"
+}
+```
+
+**Status Codes:**
+- `202 Accepted`: Task started
+- `422 Unprocessable Entity`: Validation error
+- `500 Internal Server Error`: Server error
+
+#### GET /health
+
+Health check with dependency status.
+
+**Response:**
+```json
+{
+  "status": "healthy",
+  "timestamp": "2024-01-15T10:30:00",
+  "dependencies": {
+    "database": "connected",
+    "embedder": "loaded",
+    "retriever": "ready"
+  },
+  "version": "1.0.0"
+}
+```
+
+**Status Codes:**
+- `200 OK`: Success
+
+#### GET /cache-stats
+
+Get cache performance metrics.
+
+**Response:**
+```json
+{
+  "total_entries": 150,
+  "hit_rate": 0.72,
+  "total_hits": 1080,
+  "total_misses": 420,
+  "avg_ttl_hours": 12.5,
+  "cache_size_mb": 2.3
+}
+```
+
+**Status Codes:**
+- `200 OK`: Success
+
+#### DELETE /cache/{ticker}
+
+Invalidate cache for specific ticker.
+
+**Response:**
+```json
+{
+  "status": "success",
+  "message": "Cache invalidated for ticker AAPL",
+  "ticker": "AAPL",
+  "entries_deleted": 5
+}
+```
+
+**Status Codes:**
+- `200 OK`: Success
+- `500 Internal Server Error`: Server error
+
+### API Documentation
+
+Interactive API documentation is available at:
+- **Swagger UI**: `http://localhost:8000/docs`
+- **ReDoc**: `http://localhost:8000/redoc`
+
+### CORS Configuration
+
+The API allows cross-origin requests from any origin with:
+- All HTTP methods
+- All headers
+- Credentials support
+
+### Request Validation
+
+**SafetyCheckRequest:**
+- `ticker`: 1-10 characters, converted to uppercase
+- `allocation_pct`: 0-100 (inclusive)
+- `use_cache`: boolean (default: true)
+
+**IndexFilingRequest:**
+- `ticker`: 1-10 characters, converted to uppercase
+- `cik`: Exactly 10 characters
+- `filing_type`: Must be "10-K", "10-Q", or "8-K"
+- `filing_date`: Valid ISO date
+- `filing_url`: Valid URL string
+
+### Example Usage
+
+**Python:**
+```python
+import requests
+
+# Safety check
+response = requests.post(
+    "http://localhost:8000/safety-check",
+    json={
+        "ticker": "AAPL",
+        "allocation_pct": 15.0,
+        "use_cache": True
+    }
+)
+
+result = response.json()
+print(f"Decision: {result['decision']}")
+print(f"Risk Score: {result['risk_score']}")
+print(f"Reasoning: {result['reasoning']}")
+```
+
+**cURL:**
+```bash
+# Safety check
+curl -X POST "http://localhost:8000/safety-check" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "ticker": "AAPL",
+    "allocation_pct": 15.0,
+    "use_cache": true
+  }'
+
+# Health check
+curl "http://localhost:8000/health"
+
+# Cache stats
+curl "http://localhost:8000/cache-stats"
+
+# Invalidate cache
+curl -X DELETE "http://localhost:8000/cache/AAPL"
+```
+
+## Running Tests
+
+The project includes comprehensive unit and integration tests with 91% code coverage.
+
+### Quick Test Commands
+
+```bash
+# Run all tests with coverage
+podman exec rag-safety-api pytest tests/ -v --cov=src --cov-report=term-missing
+
+# Or using docker-compose
+docker-compose exec api pytest tests/ -v --cov=src
+```
+
+### Test Categories
+
+```bash
+# Unit Tests - Core Logic
+podman exec rag-safety-api pytest tests/test_safety_checker.py -v  # Safety decision logic
+podman exec rag-safety-api pytest tests/test_earnings_checker.py -v  # Earnings proximity
+podman exec rag-safety-api pytest tests/test_hybrid_retrieval.py -v  # Hybrid retrieval
+
+# Integration Tests - End-to-End
+podman exec rag-safety-api pytest tests/test_integration.py -v  # Full workflow tests
+podman exec rag-safety-api pytest tests/test_api.py -v  # API endpoints
+
+# Data Layer Tests
+podman exec rag-safety-api pytest tests/test_store.py -v  # Database operations
+podman exec rag-safety-api pytest tests/test_parser.py -v  # SEC filing parsing
+podman exec rag-safety-api pytest tests/test_chunker.py -v  # Text chunking
+podman exec rag-safety-api pytest tests/test_embedder.py -v  # Embedding generation
+```
+
+### Coverage Report
+
+Current test coverage: **91% overall**
+
+| Module | Coverage |
+|--------|----------|
+| `src/safety/checker.py` | 88% |
+| `src/safety/earnings.py` | 99% |
+| `src/api/models.py` | 100% |
+| `src/data/store.py` | 98% |
+| `src/data/parser.py` | 99% |
+| `src/retrieval/hybrid.py` | 96% |
+
+Generate HTML coverage report:
+```bash
+podman exec rag-safety-api pytest tests/ --cov=src --cov-report=html
+# Report available at htmlcov/index.html
+```
+
+### Test Configuration
+
+Tests are configured in `pytest.ini`:
+- Async mode: auto (for FastAPI async tests)
+- Coverage: enabled by default
+- Verbose output with short tracebacks
 
 ## Deployment
 
 ### Render.com (Free Tier)
 
-1. Push code to GitHub
-2. Create new Web Service on Render
-3. Connect repository
-4. Render will use `render.yaml` configuration
-5. Add environment variables in Render dashboard
-6. Deploy
+This project is configured for one-click deployment to Render.com using the included `render.yaml` Blueprint.
+
+#### Quick Deploy
+
+1. **Push to GitHub**:
+   ```bash
+   git add .
+   git commit -m "feat(deployment): prepare for Render deployment"
+   git push origin main
+   ```
+
+2. **Deploy on Render**:
+   - Go to [Render Dashboard](https://dashboard.render.com)
+   - Click **"New +"** → **"Blueprint"**
+   - Connect your GitHub repository
+   - Select this repository
+   - Click **"Apply"**
+
+3. **Add Environment Variables**:
+   Navigate to your service and add these secrets:
+   - `SUPABASE_URL`: Your Supabase project URL
+   - `SUPABASE_KEY`: Your Supabase anon/public key
+   - `GROQ_API_KEY`: Your Groq API key from [console.groq.com](https://console.groq.com/keys)
+
+4. **Verify Deployment**:
+   ```bash
+   # Test with your Render URL
+   ./test_deployment.sh https://rag-safety-checker.onrender.com
+   ```
+
+#### Configuration
+
+The `render.yaml` Blueprint includes:
+- **Service**: Docker-based web service
+- **Region**: Oregon (free tier)
+- **Health Check**: `/health` endpoint
+- **Auto-deploy**: Enabled on git push
+- **Environment**: Pre-configured with Groq LLM (free)
+
+#### Free Tier Notes
+
+- **Cold Starts**: Service sleeps after 15 minutes of inactivity
+- **First Request**: May take 30-60 seconds after sleep
+- **Build Time**: ~5-10 minutes for initial deployment
+- **Memory**: 512 MB RAM (sufficient for this application)
+
+For detailed deployment instructions, troubleshooting, and production tips, see [`DEPLOYMENT.md`](./DEPLOYMENT.md).
 
 ## Performance Targets
 
