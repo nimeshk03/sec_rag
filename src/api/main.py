@@ -25,6 +25,8 @@ from src.api.models import (
 from src.safety.checker import SafetyChecker
 from src.data.store import SupabaseStore
 from src.data.sec_downloader import FilingInfo
+from src.embeddings.embedder import LocalEmbedder
+from src.retrieval.hybrid import HybridRetriever
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -51,12 +53,14 @@ app.add_middleware(
 # Global instances (initialized on startup)
 safety_checker: Optional[SafetyChecker] = None
 store: Optional[SupabaseStore] = None
+embedder: Optional[LocalEmbedder] = None
+retriever: Optional[HybridRetriever] = None
 
 
 @app.on_event("startup")
 async def startup_event():
     """Initialize components on startup."""
-    global safety_checker, store
+    global safety_checker, store, embedder, retriever
     
     logger.info("Starting up SEC Filing RAG Safety System...")
     
@@ -65,11 +69,22 @@ async def startup_event():
         store = SupabaseStore()
         logger.info("✓ Database store initialized")
         
-        # Initialize safety checker
-        safety_checker = SafetyChecker(store=store)
+        # Pre-load embedder model to avoid cold start delays
+        logger.info("Loading embedding model (this may take 10-20 seconds)...")
+        embedder = LocalEmbedder()
+        # Force model loading by triggering a test embedding
+        _ = embedder.embed_text("warmup")
+        logger.info("✓ Embedding model loaded and ready")
+        
+        # Initialize retriever with pre-loaded embedder
+        retriever = HybridRetriever(store=store, embedder=embedder)
+        logger.info("✓ Hybrid retriever initialized")
+        
+        # Initialize safety checker with pre-loaded components
+        safety_checker = SafetyChecker(store=store, retriever=retriever)
         logger.info("✓ Safety checker initialized")
         
-        logger.info("🚀 Application startup complete")
+        logger.info("🚀 Application startup complete - ready to accept requests")
         
     except Exception as e:
         logger.warning(f"⚠️  Startup initialization failed (may be in test mode): {e}")
@@ -260,7 +275,7 @@ async def health_check():
         
         # Check embedder
         try:
-            if safety_checker and safety_checker._retriever:
+            if embedder and embedder._model is not None:
                 dependencies["embedder"] = "loaded"
             else:
                 dependencies["embedder"] = "not_initialized"
@@ -269,7 +284,7 @@ async def health_check():
         
         # Check retriever
         try:
-            if safety_checker:
+            if retriever:
                 dependencies["retriever"] = "ready"
             else:
                 dependencies["retriever"] = "not_initialized"
